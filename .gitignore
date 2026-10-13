@@ -1,0 +1,7 @@
+# Written by Claude Code when it loads the mod from a folder
+cache-countdown/.claude-plugin/types/
+cache-countdown/tsconfig.json
+
+# OS
+.DS_Store
+Thumbs.db

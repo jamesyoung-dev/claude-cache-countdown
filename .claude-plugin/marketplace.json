@@ -1,0 +1,12 @@
+{
+  "name": "claude-cache-countdown",
+  "owner": { "name": "James Young", "url": "https://github.com/jamesyoung-dev" },
+  "description": "A Claude Code mod that adds to claude_statusline_plus: its cache status stays on screen during tool approvals",
+  "plugins": [
+    {
+      "name": "cache-countdown",
+      "source": "./cache-countdown",
+      "description": "Keeps claude_statusline_plus's prompt-cache status visible while a tool approval dialog is open"
+    }
+  ]
+}
