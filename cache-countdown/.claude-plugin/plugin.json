@@ -1,0 +1,10 @@
+{
+  "name": "cache-countdown",
+  "version": "0.1.0",
+  "description": "Keeps claude_statusline_plus's prompt-cache status visible while a tool approval dialog is open",
+  "author": { "name": "James Young", "url": "https://github.com/jamesyoung-dev" },
+  "homepage": "https://github.com/jamesyoung-dev/claude-cache-countdown",
+  "repository": "https://github.com/jamesyoung-dev/claude-cache-countdown",
+  "license": "MIT",
+  "keywords": ["status-line", "prompt-cache", "permissions", "mod"]
+}
