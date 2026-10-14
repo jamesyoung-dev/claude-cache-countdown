@@ -51,3 +51,26 @@ test('passes the response stream and the verdict through unchanged', async ($, o
   expect(verdict.decision).toBe('ask')
   expect(ran.some(cmd => cmd.includes('statusline_plus.sh'))).toBe(true)
 })
+
+test('drops the line once the approved call is running, not when it finishes', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'cache warm 59m', stderr: '' } }))
+  on('tool.check', () => ({ decision: 'ask', rule: 'Bash' }) as never)
+  on('session.id', () => ({ value: 'session-1' }) as never)
+  on('session.root', () => ({ value: '/tmp/project' }) as never)
+  on('ui.render', () => ({ type: 'Text', children: ['the engine row'] }) as never)
+
+  const drawn =async (component: 'ToolUse' | 'ToolProgress', props: object) =>
+    JSON.stringify(await $.ui.render({ surface: 'terminal', component, requestId: 'toolu_a', props } as never))
+  const toolUse = { tool_use_id: 'toolu_a', tool: 'Bash', input: {}, isRunning: true, isErrored: false, isInterrupted: false }
+
+  await $.tool.check({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
+  await clock.settle()
+
+  // Waiting at the dialog: the row carries the cache line.
+  expect(await drawn('ToolUse', toolUse)).toContain('cache warm')
+
+  // The pill is drawn under a call that is executing; the command is still running.
+  await drawn('ToolProgress', { tool_use_id: 'toolu_a', kind: 'background_hint', hint: '(ctrl+b to run in background)' })
+  expect(await drawn('ToolUse', toolUse)).not.toContain('cache warm')
+})
