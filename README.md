@@ -87,9 +87,9 @@ The mod is `cache-countdown/hooks/register.tsx`. It hooks six events:
 |---|---|
 | `turn.step` | Notes when each main-loop request is sent, and the tool calls its response streams in, in order. |
 | `tool.check` | When the verdict is "ask" and a permission rule matched, runs `statusline_plus.sh` and starts a 30-second refresh. |
-| `ui.render` on `ToolProgress` | The engine draws this row (the run-in-background pill) only under a call that is executing, so its first draw means the dialog was answered: stops the refresh and drops the line while a long shell command is still running. |
+| `ui.render` on `ToolProgress` | The run-in-background pill is drawn only under a call that is executing, a few seconds after the dialog is answered. A fallback: drops the line if the row hasn't already said the call is running. |
 | `tool.call` | When the call resolves (approved, refused or interrupted), stops the refresh and drops the line, if it is still there. |
-| `ui.render` on `ToolUse` | Draws the line under the row of the response's last call. |
+| `ui.render` on `ToolUse` | Draws the line under the row of the response's last call. Once the row's `isRunning` is true (the dialog was answered and the call is executing), stops the refresh and drops the line, even though the call, a long shell command say, has not finished. |
 | `ui.render` on `ToolGroup` | The same, for calls the transcript folds into one line (shell commands, reads, searches). |
 
 ### Why it tracks the send time

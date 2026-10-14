@@ -103,6 +103,19 @@ export const register: Register = on => {
   // once the call is past its dialog and executing.
   const pending = new Map<string, { text?: string; isMain: boolean; running: boolean; stop: () => void }>()
 
+  // The dialog is gone once the call is executing, but tool.call's next() runs
+  // the command too, so a long shell command would keep the line up until it
+  // finished. The call's row says it is executing (isRunning is false while the
+  // dialog waits and flips the moment it is answered), so that is the signal.
+  // True when this call's line was just dropped, so the caller redraws.
+  const markRunning = (id: string | undefined) => {
+    const entry = id === undefined ? undefined : pending.get(id)
+    if (entry === undefined || entry.running) return false
+    entry.running = true
+    entry.stop()
+    return true
+  }
+
   // The cache's TTL restarts when a request is sent, but the transcript only
   // records the response once it lands: by the time a dialog opens, the
   // transcript still shows the previous request. So note each main-loop send.
@@ -161,17 +174,10 @@ export const register: Register = on => {
     return verdict
   }).catch(($, e, next) => next(e)) // a display aid: never let it decide a call
 
-  // The dialog is gone once the call is executing, but tool.call's next() runs
-  // the command too, so a long shell command would keep the line up until it
-  // finished. The engine draws a ToolProgress row (the run-in-background pill)
-  // only under a call that is executing, so its first draw marks the approval.
+  // The ToolProgress row (the run-in-background pill) is drawn only under an
+  // executing call too, a few seconds after isRunning flips: a fallback.
   on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
-    const entry = pending.get(e.props.tool_use_id)
-    if (entry !== undefined && !entry.running) {
-      entry.running = true
-      entry.stop()
-      $.ui.invalidate('ui.render')
-    }
+    if (markRunning(e.props.tool_use_id)) $.ui.invalidate('ui.render')
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -192,6 +198,7 @@ export const register: Register = on => {
   // A call's row is a ToolUse, or, for calls the transcript folds (shell
   // commands, reads, searches), a line of a ToolGroup.
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.props.isRunning && markRunning(e.props.tool_use_id)) $.ui.invalidate('ui.render')
     const line = current()
     const isAnchor = line !== undefined && e.props.tool_use_id === line.anchor
     if (!isAnchor) return next(e)
@@ -205,6 +212,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+    for (const call of e.props.calls) if (call.isRunning && markRunning(call.tool_use_id)) $.ui.invalidate('ui.render')
     const line = current()
     // An expanded group draws each call as its own ToolUse row, which draws the line.
     const isAnchor = line !== undefined && !e.props.isExpanded && e.props.calls.some(c => c.tool_use_id === line.anchor)
