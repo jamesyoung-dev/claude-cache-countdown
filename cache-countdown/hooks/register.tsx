@@ -99,8 +99,22 @@ function lineOf(Text: (props: { color?: string; dimColor?: boolean; children?: u
 }
 
 export const register: Register = on => {
-  // tool_use_id of each waiting call -> its line and its timer
-  const pending = new Map<string, { text?: string; isMain: boolean; stop: () => void }>()
+  // tool_use_id of each waiting call -> its line and its timer. `running` is set
+  // once the call is past its dialog and executing.
+  const pending = new Map<string, { text?: string; isMain: boolean; running: boolean; stop: () => void }>()
+
+  // The dialog is gone once the call is executing, but tool.call's next() runs
+  // the command too, so a long shell command would keep the line up until it
+  // finished. The call's row says it is executing (isRunning is false while the
+  // dialog waits and flips the moment it is answered), so that is the signal.
+  // True when this call's line was just dropped, so the caller redraws.
+  const markRunning = (id: string | undefined) => {
+    const entry = id === undefined ? undefined : pending.get(id)
+    if (entry === undefined || entry.running) return false
+    entry.running = true
+    entry.stop()
+    return true
+  }
 
   // The cache's TTL restarts when a request is sent, but the transcript only
   // records the response once it lands: by the time a dialog opens, the
@@ -134,7 +148,7 @@ export const register: Register = on => {
   // The newest waiting call's line and the row (tool_use_id) it is drawn under,
   // worked out at each draw: the response may still be streaming in calls.
   const current = () => {
-    const [id, entry] = [...pending].at(-1) ?? []
+    const [id, entry] = [...pending].filter(([, e]) => !e.running).at(-1) ?? []
     if (id === undefined || entry?.text === undefined) return undefined
     return { anchor: entry.isMain ? anchorFor(id) : id, text: entry.text }
   }
@@ -155,10 +169,17 @@ export const register: Register = on => {
     }
     const isMain = e.agentId === undefined
     const timer = $.clock.every(REFRESH_MS, () => void refresh().catch(() => undefined))
-    pending.set(id, { isMain, stop: () => timer.cancel() })
+    pending.set(id, { isMain, running: false, stop: () => timer.cancel() })
     await refresh().catch(() => undefined)
     return verdict
   }).catch(($, e, next) => next(e)) // a display aid: never let it decide a call
+
+  // The ToolProgress row (the run-in-background pill) is drawn only under an
+  // executing call too, a few seconds after isRunning flips: a fallback.
+  on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
+    if (markRunning(e.props.tool_use_id)) $.ui.invalidate('ui.render')
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // Once the call resolves (approved, refused or interrupted), drop its line.
   on('tool.call', async ($, e, next) => {
@@ -177,6 +198,7 @@ export const register: Register = on => {
   // A call's row is a ToolUse, or, for calls the transcript folds (shell
   // commands, reads, searches), a line of a ToolGroup.
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.props.isRunning && markRunning(e.props.tool_use_id)) $.ui.invalidate('ui.render')
     const line = current()
     const isAnchor = line !== undefined && e.props.tool_use_id === line.anchor
     if (!isAnchor) return next(e)
@@ -190,6 +212,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+    for (const call of e.props.calls) if (call.isRunning && markRunning(call.tool_use_id)) $.ui.invalidate('ui.render')
     const line = current()
     // An expanded group draws each call as its own ToolUse row, which draws the line.
     const isAnchor = line !== undefined && !e.props.isExpanded && e.props.calls.some(c => c.tool_use_id === line.anchor)
