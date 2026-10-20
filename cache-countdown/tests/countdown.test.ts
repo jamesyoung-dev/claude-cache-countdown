@@ -82,7 +82,7 @@ async function waitingCall(
 const call = (isRunning: boolean, tool_use_id = 'toolu_a') => ({ tool_use_id, tool: 'Bash', input: {}, isRunning, isErrored: false, isInterrupted: false })
 const group = (isRunning: boolean) => ({ calls: [call(isRunning)], isActive: true, isExpanded: false })
 
-test('drops the line from a ToolUse row once the call is running, not when it finishes', async ($, on) => {
+test('drops the line from a ToolUse row once the call is running and keeps it dropped', async ($, on) => {
   const drawn = await waitingCall($, on)
   expect(await drawn('ToolUse', call(false))).toContain('cache warm')
   expect(await drawn('ToolUse', call(true))).not.toContain('cache warm')
@@ -141,12 +141,18 @@ test('draws the line under the last call of the response that asked', async ($, 
   expect(await drawn('ToolUse', call(false, 'toolu_b'))).toContain('cache warm')
 })
 
-test('re-reads a warm cache with the expiry from the last send', async ($, on) => {
+// Runs one response (unless `responded` is false), then a tool check, and returns the argv of every status read.
+async function statusReads(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  stdout: string,
+  responded = true,
+) {
   const clock = mock.clock(on, { now: 1_000_000 })
   const ran: string[] = []
   on('process.run', (_$, e) => {
     ran.push(e.argv.join(' '))
-    return { value: { exitCode: 0, stdout: 'cache warm 4m (5m ttl)', stderr: '' } }
+    return { value: { exitCode: 0, stdout, stderr: '' } }
   })
   on('turn.step', async function* () {
     return RESULT
@@ -155,15 +161,42 @@ test('re-reads a warm cache with the expiry from the last send', async ($, on) =
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('session.root', () => ({ value: '/tmp/project' }) as never)
 
-  for await (const _chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1 } as never)) {
-    // The response is only read for the send time it records.
+  if (responded) {
+    for await (const _chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1 } as never)) {
+      // The response is only read for the send time it records.
+    }
   }
   await $.tool.check({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
   await clock.settle()
+  return ran
+}
+
+test('re-reads a warm cache with the expiry from the last send', async ($, on) => {
+  const ran = await statusReads($, on, 'cache warm 4m (5m ttl)')
 
   // The send was at 1,000 s, so a 5-minute TTL expires at 1,300 s.
   expect(ran.at(-1)).toContain('"expires_at":1300')
   expect(ran.at(-1)).toContain('"ttl":"5m"')
+})
+
+test('re-reads a warm cache on the 1-hour tier with a 1-hour expiry', async ($, on) => {
+  const ran = await statusReads($, on, 'cache warm 50m (1h ttl)')
+
+  // A 1-hour TTL from the send at 1,000 s expires at 4,600 s.
+  expect(ran.at(-1)).toContain('"expires_at":4600')
+  expect(ran.at(-1)).toContain('"ttl":"1h"')
+})
+
+test('does not re-read a cold cache', async ($, on) => {
+  const ran = await statusReads($, on, 'cache cold')
+
+  expect(ran.some(cmd => cmd.includes('"prompt_cache"'))).toBe(false)
+})
+
+test('does not re-read when no request has been sent', async ($, on) => {
+  const ran = await statusReads($, on, 'cache warm 4m (5m ttl)', false)
+
+  expect(ran.some(cmd => cmd.includes('"prompt_cache"'))).toBe(false)
 })
 
 test('keeps the verdict when the status read fails', async ($, on) => {
@@ -196,4 +229,66 @@ test('draws the status line in the colors it prints', async ($, on) => {
   expect(row).toContain('#ff0000')
   expect(row).toContain('cache warm')
   expect(row).toContain('59m')
+})
+
+// Asks for approval for each call in order, with a status read the test can change. Returns the clock,
+// and a way to draw a call's row.
+async function askingCalls(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  status: () => string,
+  calls: { tool_use_id: string; agentId?: string }[],
+) {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: status(), stderr: '' } }))
+  on('tool.check', () => ({ decision: 'ask', rule: 'Bash' }) as never)
+  on('session.id', () => ({ value: 'session-1' }) as never)
+  on('session.root', () => ({ value: '/tmp/project' }) as never)
+  on('ui.render', () => ({ type: 'Text', children: ['the engine row'] }) as never)
+
+  for (const waiting of calls) await $.tool.check({ tool: 'Bash', input: {}, ...waiting } as never)
+  await clock.settle()
+
+  const draw = async (tool_use_id: string) =>
+    JSON.stringify(await $.ui.render({ surface: 'terminal', component: 'ToolUse', requestId: tool_use_id, props: call(false, tool_use_id) } as never))
+  return { clock, draw }
+}
+
+test('redraws the status line every 30 seconds while the dialog is open', async ($, on) => {
+  let minutes = 59
+  const { clock, draw } = await askingCalls($, on, () => `cache warm ${minutes}m`, [{ tool_use_id: 'toolu_a' }])
+  expect(await draw('toolu_a')).toContain('cache warm 59m')
+
+  minutes = 58
+  await clock.advance(29_999)
+  expect(await draw('toolu_a')).toContain('cache warm 59m')
+  await clock.advance(1)
+  expect(await draw('toolu_a')).toContain('cache warm 58m')
+})
+
+test('stops refreshing once the call resolves', async ($, on) => {
+  let reads = 0
+  on('tool.call', () => ({ result: 'done' }) as never)
+  const { clock } = await askingCalls($, on, () => {
+    reads += 1
+    return 'cache warm 59m'
+  }, [{ tool_use_id: 'toolu_a' }])
+  const before = reads
+
+  await $.tool.call({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
+  await clock.advance(60_000)
+  expect(reads).toBe(before)
+})
+
+test('draws the line under the newest of two waiting calls', async ($, on) => {
+  const { draw } = await askingCalls($, on, () => 'cache warm 59m', [{ tool_use_id: 'toolu_a' }, { tool_use_id: 'toolu_b' }])
+
+  expect(await draw('toolu_a')).not.toContain('cache warm')
+  expect(await draw('toolu_b')).toContain('cache warm 59m')
+})
+
+test('draws the line on a sub-agent call\'s own row', async ($, on) => {
+  const { draw } = await askingCalls($, on, () => 'cache warm 59m', [{ tool_use_id: 'toolu_s', agentId: 'agent-1' }])
+
+  expect(await draw('toolu_s')).toContain('cache warm 59m')
 })
