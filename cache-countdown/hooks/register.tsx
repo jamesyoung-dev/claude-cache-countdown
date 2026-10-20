@@ -11,7 +11,8 @@ const REFRESH_MS = 30_000 // the statusLine.refreshInterval statusline_plus's in
 // (<project>/.claude, which takes precedence) or the global one
 // (${CLAUDE_CONFIG_DIR:-~/.claude}); prints nothing when neither exists. Its
 // stdin is the session's transcript path, found by session id ($1), merged with
-// extra payload ($3, the prompt_cache override). $2 is the project root.
+// the payload ($3: session id, rate limits and the prompt_cache override, as the
+// status line's own payload carries them). $2 is the project root.
 const RUN_STATUS_LINE = `
 cfg="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 s="$2/.claude/statusline_plus.sh"
@@ -21,9 +22,23 @@ p=$(ls "$cfg"/projects/*/"$1".jsonl 2>/dev/null | head -1)
 jq -nc --arg p "$p" --argjson x "$3" '{transcript_path: $p} + $x' | bash "$s"
 `
 
+// The status line's rate_limits, from the session's usage figures: each window
+// is {used_percentage, resets_at}, with resets_at in Unix seconds. A window the
+// engine has no reading for is left out, which the addon's segments skip.
+async function rateLimits($: EngineInterface) {
+  const windows = (await $.session.usage().catch(() => undefined))?.rateLimits ?? []
+  return Object.fromEntries(
+    windows.map(w => [
+      w.kind,
+      { used_percentage: w.percentUsed, ...(w.resetsAt === undefined ? {} : { resets_at: Math.floor(Date.parse(w.resetsAt) / 1000) }) },
+    ]),
+  )
+}
+
 async function statusText($: EngineInterface, extra: object) {
-  const [sessionId, root] = await Promise.all([$.session.id(), $.session.root()])
-  const argv = ['/bin/sh', '-c', RUN_STATUS_LINE, 'sh', sessionId, root, JSON.stringify(extra)]
+  const [sessionId, root, rate_limits] = await Promise.all([$.session.id(), $.session.root(), rateLimits($)])
+  const payload = { session_id: sessionId, rate_limits, ...extra }
+  const argv = ['/bin/sh', '-c', RUN_STATUS_LINE, 'sh', sessionId, root, JSON.stringify(payload)]
   const { stdout } = await $.process.run(argv, { timeoutMs: 5_000 })
   return stdout.trim() || undefined
 }

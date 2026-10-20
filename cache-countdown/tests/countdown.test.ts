@@ -161,3 +161,32 @@ test('re-reads a warm cache with the expiry from the last send', async ($, on) =
   expect(ran.at(-1)).toContain('"expires_at":1300')
   expect(ran.at(-1)).toContain('"ttl":"5m"')
 })
+
+test('hands the status line the session\'s rate-limit windows, as its own payload carries them', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const ran: string[] = []
+  on('process.run', (_$, e) => {
+    ran.push(e.argv.join(' '))
+    return { value: { exitCode: 0, stdout: 'cache warm 59m', stderr: '' } }
+  })
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: {},
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: 12, resetsAt: '1970-01-01T02:00:00Z' },
+        { kind: 'seven_day', percentUsed: 41 },
+      ],
+    },
+  }) as never)
+  on('tool.check', () => ({ decision: 'ask', rule: 'Bash' }) as never)
+  on('session.id', () => ({ value: 'session-1' }) as never)
+  on('session.root', () => ({ value: '/tmp/project' }) as never)
+
+  await $.tool.check({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
+  await clock.settle()
+
+  // A window's reset is Unix seconds (two hours in is 7,200 s); one with no reset time carries only its percentage.
+  expect(ran.at(-1)).toContain('"session_id":"session-1"')
+  expect(ran.at(-1)).toContain('"rate_limits":{"five_hour":{"used_percentage":12,"resets_at":7200},"seven_day":{"used_percentage":41}}')
+})
