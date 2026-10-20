@@ -17,20 +17,12 @@ const CHUNKS = [
   { kind: 'tool', index: 1, id: 'toolu_b', name: 'Bash' },
 ]
 
-test('passes the response stream and the verdict through unchanged', async ($, on) => {
-  const clock = mock.clock(on, { now: 1_000_000 })
-  const ran: string[] = []
-  on('process.run', (_$, e) => {
-    ran.push(e.argv.join(' '))
-    return { value: { exitCode: 0, stdout: '', stderr: '' } }
-  })
+test('passes the response stream through unchanged', async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
   on('turn.step', async function* () {
     for (const chunk of CHUNKS) yield chunk
     return RESULT
   } as never)
-  on('tool.check', () => ({ decision: 'ask', rule: 'Edit' }) as never)
-  on('session.id', () => ({ value: 'session-1' }) as never)
-  on('session.root', () => ({ value: '/tmp/project' }) as never)
 
   // Every chunk and the result reach the caller unchanged.
   const seen: unknown[] = []
@@ -44,12 +36,23 @@ test('passes the response stream and the verdict through unchanged', async ($, o
     seen.push(step.value)
   }
   expect(seen).toEqual(CHUNKS)
+})
 
-  // An ask verdict passes back unchanged, and the line is read from the status line.
+test('passes an ask verdict through unchanged', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+  on('tool.check', () => ({ decision: 'ask', rule: 'Edit' }) as never)
+  on('session.id', () => ({ value: 'session-1' }) as never)
+  on('session.root', () => ({ value: '/tmp/project' }) as never)
+
   const verdict = await $.tool.check({ tool: 'Edit', input: {}, tool_use_id: 'toolu_a' } as never)
   await clock.settle()
-  expect(verdict.decision).toBe('ask')
-  expect(ran.some(cmd => cmd.includes('statusline_plus.sh'))).toBe(true)
+  expect(verdict).toEqual({ decision: 'ask', rule: 'Edit' })
+})
+
+test('draws the status line text under a waiting call', async ($, on) => {
+  const drawn = await waitingCall($, on)
+  expect(await drawn('ToolUse', call(false))).toContain('cache warm 59m')
 })
 
 // A call waiting at its dialog (or, with another verdict, not waiting at all),
@@ -60,9 +63,10 @@ async function waitingCall(
   $: Parameters<Parameters<typeof test>[1]>[0],
   on: Parameters<Parameters<typeof test>[1]>[1],
   verdict: object = { decision: 'ask', rule: 'Bash' },
+  stdout = 'cache warm 59m',
 ) {
   const clock = mock.clock(on, { now: 1_000_000 })
-  on('process.run', () => ({ value: { exitCode: 0, stdout: 'cache warm 59m', stderr: '' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout, stderr: '' } }))
   on('tool.check', () => verdict as never)
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('session.root', () => ({ value: '/tmp/project' }) as never)
@@ -160,4 +164,36 @@ test('re-reads a warm cache with the expiry from the last send', async ($, on) =
   // The send was at 1,000 s, so a 5-minute TTL expires at 1,300 s.
   expect(ran.at(-1)).toContain('"expires_at":1300')
   expect(ran.at(-1)).toContain('"ttl":"5m"')
+})
+
+test('keeps the verdict when the status read fails', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('process.run', () => {
+    throw new Error('status read failed')
+  })
+  on('tool.check', () => ({ decision: 'ask', rule: 'Bash' }) as never)
+  on('session.id', () => ({ value: 'session-1' }) as never)
+  on('session.root', () => ({ value: '/tmp/project' }) as never)
+
+  // The status line is a display aid: its failure must not change the verdict.
+  const verdict = await $.tool.check({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
+  await clock.settle()
+  expect(verdict).toEqual({ decision: 'ask', rule: 'Bash' })
+})
+
+test('draws no line when the status script prints nothing', async ($, on) => {
+  const drawn = await waitingCall($, on, { decision: 'ask', rule: 'Bash' }, '')
+  const row = await drawn('ToolUse', call(false))
+  expect(row).toContain('the engine row')
+  expect(row).not.toContain('cache warm')
+})
+
+test('draws the status line in the colors it prints', async ($, on) => {
+  // 33 is the base palette's yellow; 38;5;196 is the color cube's pure red.
+  const drawn = await waitingCall($, on, { decision: 'ask', rule: 'Bash' }, '\x1b[33mcache warm\x1b[0m \x1b[38;5;196m59m\x1b[0m')
+  const row = await drawn('ToolUse', call(false))
+  expect(row).toContain('#808000')
+  expect(row).toContain('#ff0000')
+  expect(row).toContain('cache warm')
+  expect(row).toContain('59m')
 })
