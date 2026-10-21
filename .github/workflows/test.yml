@@ -11,7 +11,13 @@ permissions:
 
 jobs:
   test:
+    name: Test (Claude Code ${{ matrix.claude-code }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the current pin. Keep in step with the README's supported versions.
+        claude-code: ['2.1.286', '2.1.305']
     steps:
       - uses: actions/checkout@v4
 
@@ -19,9 +25,8 @@ jobs:
         with:
           node-version: 22
 
-      # Pinned to the Claude Code version the plugin is tested against.
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code@2.1.305 --registry=https://registry.npmjs.org/
+        run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude-code }} --registry=https://registry.npmjs.org/
 
       - name: Run plugin tests
         run: claude plugin test ./cache-countdown

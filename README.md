@@ -56,7 +56,7 @@ To try it without installing, copy the `cache-countdown/` folder to `~/.claude/s
 
 ### Requirements
 
-- Claude Code 2.1.296 or later (the version it was built and tested on)
+- Claude Code 2.1.286 or 2.1.305, the versions the test suite runs on. Other versions are unverified.
 - claude_statusline_plus installed globally (`~/.claude`, or `$CLAUDE_CONFIG_DIR`) or in the project (`<project>/.claude`, which takes precedence, as it does for the status line itself)
 - `jq` and `bash`, which claude_statusline_plus needs anyway
 
