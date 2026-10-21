@@ -2,7 +2,7 @@
 
 All notable changes to cache-countdown are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version is the one in `cache-countdown/.claude-plugin/plugin.json`.
 
-## Unreleased
+## 0.1.2 - 2026-10-21
 
 ### Fixed
 
