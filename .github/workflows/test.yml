@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Pinned to the Claude Code version the plugin is tested against.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.305 --registry=https://registry.npmjs.org/
+
+      - name: Run plugin tests
+        run: claude plugin test ./cache-countdown
