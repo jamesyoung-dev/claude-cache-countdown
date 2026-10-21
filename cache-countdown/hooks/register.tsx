@@ -74,13 +74,34 @@ function segments(text: string) {
   return out
 }
 
-// The transcript's reading gives the TTL tier (and a cold state, such as after
-// /model); while warm, re-read with the expiry from the last send, which the
-// transcript does not hold yet while the dialog is open.
+// The TTL tier (300 or 3600 seconds) of the last request in the transcript that
+// wrote the cache: whichever of cache_creation's 5m and 1h counters is non-zero,
+// 5m if both are. 3600 when the transcript has none. The status line prints the
+// tier only on a warm reading, so it cannot be read from a cold one.
+const RUN_TTL = `
+cfg="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+p=$(ls "$cfg"/projects/*/"$1".jsonl 2>/dev/null | head -1)
+[ -n "$p" ] && tail -c 4194304 "$p" | jq -rR 'fromjson? | objects
+  | select(.type == "assistant" and (.isSidechain | not))
+  | (try .message.usage.cache_creation catch null) | objects
+  | if (.ephemeral_5m_input_tokens // 0) > 0 then 300
+    elif (.ephemeral_1h_input_tokens // 0) > 0 then 3600
+    else empty end' 2>/dev/null | tail -n 1
+`
+
+async function transcriptTtl($: EngineInterface) {
+  const { stdout } = await $.process.run(['/bin/sh', '-c', RUN_TTL, 'sh', await $.session.id()], { timeoutMs: 5_000 })
+  return stdout.trim() === '300' ? 300 : 3600
+}
+
+// A dialog only opens after a request was sent, and that send refreshed the
+// cache. The transcript does not hold the send yet, so its reading can be stale
+// (cold after a long break). Once a send is known, re-read with the expiry from
+// it, whatever the transcript said.
 async function cacheLine($: EngineInterface, lastSendMs: number | undefined) {
   const text = await statusText($, {})
-  if (text === undefined || !stripAnsi(text).includes(' warm ') || lastSendMs === undefined) return text
-  const ttl = stripAnsi(text).includes('(5m ttl)') ? 300 : 3600
+  if (text === undefined || lastSendMs === undefined || !/cache (warm|cold)/.test(stripAnsi(text))) return text
+  const ttl = await transcriptTtl($)
   const prompt_cache = { expires_at: Math.floor(lastSendMs / 1000) + ttl, ttl: ttl === 300 ? '5m' : '1h', caching_observed: true }
   return statusText($, { prompt_cache })
 }
