@@ -13,6 +13,7 @@ jobs:
   test:
     name: Test (Claude Code ${{ matrix.claude-code }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -30,3 +31,29 @@ jobs:
 
       - name: Run plugin tests
         run: claude plugin test ./cache-countdown
+
+      - name: Validate marketplace
+        run: claude plugin validate .
+
+      - name: Validate plugin
+        run: claude plugin validate cache-countdown
+
+  typecheck:
+    name: Type-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install TypeScript
+        run: npm install -g typescript@5.9.3 --registry=https://registry.npmjs.org/
+
+      - name: Type-check
+        run: |
+          cp -R typecheck/types cache-countdown/.claude-plugin/
+          cp typecheck/tsconfig.json cache-countdown/
+          tsc -p cache-countdown

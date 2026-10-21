@@ -1,4 +1,9 @@
-# Written by Claude Code when it loads the mod from a folder
+CLAUDE.local.md
+
+# Session logs saved at the repo root
+/*-local-command-caveat*.txt
+
+# Written by Claude Code when it loads the mod from a folder. The committed copy is in typecheck/.
 cache-countdown/.claude-plugin/types/
 cache-countdown/tsconfig.json
 

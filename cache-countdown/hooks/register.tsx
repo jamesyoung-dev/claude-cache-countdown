@@ -1,4 +1,4 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { ElementConstructor, EngineInterface, Register, TextProps } from 'claude-code'
 
 // An approval dialog hides the status line, so draw the status line's cache
 // text under the waiting call's own transcript row, just above the dialog, and
@@ -107,7 +107,7 @@ async function cacheLine($: EngineInterface, lastSendMs: number | undefined) {
 }
 
 // The status line's styled pieces as one Text line.
-function lineOf(Text: (props: { color?: string; dimColor?: boolean; children?: unknown }) => unknown, text: string) {
+function lineOf(Text: ElementConstructor<TextProps>, text: string) {
   return (
     <Text>
       {segments(text).map(s => (
@@ -159,7 +159,7 @@ export const register: Register = on => {
         yield step.value
       }
     } finally {
-      await stream.return?.()
+      await stream.return?.(undefined as never)
     }
   }).catch(async function* ($, e, next) {
     return yield* next(e)
