@@ -2,6 +2,11 @@
 cache-countdown/.claude-plugin/types/
 cache-countdown/tsconfig.json
 
+CLAUDE.local.md
+
+# Session logs saved at the repo root
+/*-local-command-caveat*.txt
+
 # OS
 .DS_Store
 Thumbs.db
