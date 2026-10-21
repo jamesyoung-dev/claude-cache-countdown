@@ -144,15 +144,18 @@ test('draws the line under the last call of the response that asked', async ($, 
 })
 
 // Runs one response (unless `responded` is false), then a tool check, and returns the argv of every status read.
+// `tierStdout` is what the transcript's TTL tier read prints ('300', '3600', or '' when it finds none).
 async function statusReads(
   $: Parameters<Parameters<typeof test>[1]>[0],
   on: Parameters<Parameters<typeof test>[1]>[1],
   stdout: string,
   responded = true,
+  tierStdout = '',
 ) {
   const clock = mock.clock(on, { now: 1_000_000 })
   const ran: string[][] = []
   on('process.run', (_$, e) => {
+    if (!e.argv[2]?.includes('statusline_plus')) return { value: { exitCode: 0, stdout: tierStdout, stderr: '' } }
     ran.push([...e.argv])
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
@@ -177,23 +180,68 @@ async function statusReads(
 const overrides = (ran: string[][]) => ran.map(argv => JSON.parse(argv.at(-1) ?? '{}'))
 
 test('re-reads a warm cache with the expiry from the last send', async ($, on) => {
-  const ran = await statusReads($, on, 'cache warm 4m (5m ttl)')
+  const ran = await statusReads($, on, 'cache warm 4m (5m ttl)', true, '300')
 
   // The send was at 1,000 s, so a 5-minute TTL expires at 1,300 s.
   expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 1300, ttl: '5m', caching_observed: true } })
 })
 
 test('re-reads a warm cache on the 1-hour tier with a 1-hour expiry', async ($, on) => {
-  const ran = await statusReads($, on, 'cache warm 50m (1h ttl)')
+  const ran = await statusReads($, on, 'cache warm 50m (1h ttl)', true, '3600')
 
   // A 1-hour TTL from the send at 1,000 s expires at 4,600 s.
   expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 4600, ttl: '1h', caching_observed: true } })
 })
 
-test('does not re-read a cold cache', async ($, on) => {
-  const ran = await statusReads($, on, 'cache cold')
+test('re-reads a cold cache with the expiry from the last send', async ($, on) => {
+  const ran = await statusReads($, on, 'cache cold · 140k', true, '3600')
+
+  // The transcript's last request is stale, but the send at 1,000 s re-cached the prompt.
+  expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 4600, ttl: '1h', caching_observed: true } })
+})
+
+test('re-reads a cold cache on the 5-minute tier with a 5-minute expiry', async ($, on) => {
+  const ran = await statusReads($, on, 'cache cold · 140k', true, '300')
+
+  expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 1300, ttl: '5m', caching_observed: true } })
+})
+
+test('assumes the 1-hour tier when the transcript names none', async ($, on) => {
+  const ran = await statusReads($, on, 'cache cold · 140k', true, '')
+
+  expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 4600, ttl: '1h', caching_observed: true } })
+})
+
+test('does not re-read when the API reports no caching', async ($, on) => {
+  const ran = await statusReads($, on, 'cache off', true, '3600')
 
   expect(overrides(ran)).toEqual([{}])
+})
+
+test('draws a warm line when the transcript reads cold but a request was just sent', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('process.run', (_$, e) => {
+    if (!e.argv[2]?.includes('statusline_plus')) return { value: { exitCode: 0, stdout: '3600', stderr: '' } }
+    const stdout = JSON.parse(e.argv.at(-1) ?? '{}').prompt_cache ? 'cache warm 59m' : 'cache cold · 140k'
+    return { value: { exitCode: 0, stdout, stderr: '' } }
+  })
+  on('turn.step', async function* () {
+    return RESULT
+  } as never)
+  on('tool.check', () => ({ decision: 'ask', rule: 'Bash' }) as never)
+  on('session.id', () => ({ value: 'session-1' }) as never)
+  on('session.root', () => ({ value: '/tmp/project' }) as never)
+  on('ui.render', () => ({ type: 'Text', children: ['the engine row'] }) as never)
+
+  for await (const _chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1 } as never)) {
+    // The response is only read for the send time it records.
+  }
+  await $.tool.check({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
+  await clock.settle()
+
+  const row = JSON.stringify(await $.ui.render({ surface: 'terminal', component: 'ToolUse', requestId: 'toolu_a', props: call(false) } as never))
+  expect(row).toContain('cache warm 59m')
+  expect(row).not.toContain('cache cold')
 })
 
 test('does not re-read when no request has been sent', async ($, on) => {
