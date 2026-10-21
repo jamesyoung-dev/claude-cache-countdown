@@ -1,0 +1,32 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Claude Code ${{ matrix.claude-code }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the current pin. Keep in step with the README's supported versions.
+        claude-code: ['2.1.286', '2.1.305']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude-code }} --registry=https://registry.npmjs.org/
+
+      - name: Run plugin tests
+        run: claude plugin test ./cache-countdown
