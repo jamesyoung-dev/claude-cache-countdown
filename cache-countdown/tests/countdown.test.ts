@@ -16,6 +16,8 @@ const CHUNKS = [
   { kind: 'tool', index: 0, id: 'toolu_a', name: 'Edit' },
   { kind: 'tool', index: 1, id: 'toolu_b', name: 'Bash' },
 ]
+// What the status line prints while a call waits.
+const STATUS = 'cache warm 59m'
 
 test('passes the response stream through unchanged', async ($, on) => {
   mock.clock(on, { now: 1_000_000 })
@@ -25,17 +27,17 @@ test('passes the response stream through unchanged', async ($, on) => {
   } as never)
 
   // Every chunk and the result reach the caller unchanged.
+  // Drain the stream, keeping each chunk and the final result.
   const seen: unknown[] = []
   const it = $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1 } as never)[Symbol.asyncIterator]()
-  while (true) {
-    const step = await it.next()
-    if (step.done) {
-      expect(step.value).toEqual(RESULT)
-      break
-    }
+  let step = await it.next()
+  while (!step.done) {
     seen.push(step.value)
+    step = await it.next()
   }
+
   expect(seen).toEqual(CHUNKS)
+  expect(step.value).toEqual(RESULT)
 })
 
 test('passes an ask verdict through unchanged', async ($, on) => {
@@ -52,7 +54,7 @@ test('passes an ask verdict through unchanged', async ($, on) => {
 
 test('draws the status line text under a waiting call', async ($, on) => {
   const drawn = await waitingCall($, on)
-  expect(await drawn('ToolUse', call(false))).toContain('cache warm 59m')
+  expect(await drawn('ToolUse', call(false))).toContain(STATUS)
 })
 
 // A call waiting at its dialog (or, with another verdict, not waiting at all),
@@ -63,7 +65,7 @@ async function waitingCall(
   $: Parameters<Parameters<typeof test>[1]>[0],
   on: Parameters<Parameters<typeof test>[1]>[1],
   verdict: object = { decision: 'ask', rule: 'Bash' },
-  stdout = 'cache warm 59m',
+  stdout = STATUS,
 ) {
   const clock = mock.clock(on, { now: 1_000_000 })
   on('process.run', () => ({ value: { exitCode: 0, stdout, stderr: '' } }))
@@ -84,7 +86,7 @@ const group = (isRunning: boolean) => ({ calls: [call(isRunning)], isActive: tru
 
 test('drops the line from a ToolUse row once the call is running and keeps it dropped', async ($, on) => {
   const drawn = await waitingCall($, on)
-  expect(await drawn('ToolUse', call(false))).toContain('cache warm')
+  expect(await drawn('ToolUse', call(false))).toContain(STATUS)
   expect(await drawn('ToolUse', call(true))).not.toContain('cache warm')
   // Gone for good, even if a later draw were to say otherwise.
   expect(await drawn('ToolUse', call(false))).not.toContain('cache warm')
@@ -92,13 +94,13 @@ test('drops the line from a ToolUse row once the call is running and keeps it dr
 
 test('drops the line from a ToolGroup row once the call is running', async ($, on) => {
   const drawn = await waitingCall($, on)
-  expect(await drawn('ToolGroup', group(false))).toContain('cache warm')
+  expect(await drawn('ToolGroup', group(false))).toContain(STATUS)
   expect(await drawn('ToolGroup', group(true))).not.toContain('cache warm')
 })
 
 test('drops the line when the run-in-background pill is drawn', async ($, on) => {
   const drawn = await waitingCall($, on)
-  expect(await drawn('ToolUse', call(false))).toContain('cache warm')
+  expect(await drawn('ToolUse', call(false))).toContain(STATUS)
   await drawn('ToolProgress', { tool_use_id: 'toolu_a', kind: 'background_hint', hint: '(ctrl+b to run in background)' })
   expect(await drawn('ToolUse', call(false))).not.toContain('cache warm')
 })
@@ -106,7 +108,7 @@ test('drops the line when the run-in-background pill is drawn', async ($, on) =>
 test('drops the line once the call resolves', async ($, on) => {
   on('tool.call', () => ({ result: 'done' }) as never)
   const drawn = await waitingCall($, on)
-  expect(await drawn('ToolUse', call(false))).toContain('cache warm')
+  expect(await drawn('ToolUse', call(false))).toContain(STATUS)
   await $.tool.call({ tool: 'Bash', input: {}, tool_use_id: 'toolu_a' } as never)
   expect(await drawn('ToolUse', call(false))).not.toContain('cache warm')
 })
@@ -138,7 +140,7 @@ test('draws the line under the last call of the response that asked', async ($, 
     // Only the calls the response names matter here.
   }
   expect(await drawn('ToolUse', call(false, 'toolu_a'))).not.toContain('cache warm')
-  expect(await drawn('ToolUse', call(false, 'toolu_b'))).toContain('cache warm')
+  expect(await drawn('ToolUse', call(false, 'toolu_b'))).toContain(STATUS)
 })
 
 // Runs one response (unless `responded` is false), then a tool check, and returns the argv of every status read.
@@ -149,9 +151,9 @@ async function statusReads(
   responded = true,
 ) {
   const clock = mock.clock(on, { now: 1_000_000 })
-  const ran: string[] = []
+  const ran: string[][] = []
   on('process.run', (_$, e) => {
-    ran.push(e.argv.join(' '))
+    ran.push([...e.argv])
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
   on('turn.step', async function* () {
@@ -171,32 +173,33 @@ async function statusReads(
   return ran
 }
 
+// The JSON override each status read was given, in order (the last argument of its process).
+const overrides = (ran: string[][]) => ran.map(argv => JSON.parse(argv.at(-1) ?? '{}'))
+
 test('re-reads a warm cache with the expiry from the last send', async ($, on) => {
   const ran = await statusReads($, on, 'cache warm 4m (5m ttl)')
 
   // The send was at 1,000 s, so a 5-minute TTL expires at 1,300 s.
-  expect(ran.at(-1)).toContain('"expires_at":1300')
-  expect(ran.at(-1)).toContain('"ttl":"5m"')
+  expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 1300, ttl: '5m', caching_observed: true } })
 })
 
 test('re-reads a warm cache on the 1-hour tier with a 1-hour expiry', async ($, on) => {
   const ran = await statusReads($, on, 'cache warm 50m (1h ttl)')
 
   // A 1-hour TTL from the send at 1,000 s expires at 4,600 s.
-  expect(ran.at(-1)).toContain('"expires_at":4600')
-  expect(ran.at(-1)).toContain('"ttl":"1h"')
+  expect(overrides(ran).at(-1)).toEqual({ prompt_cache: { expires_at: 4600, ttl: '1h', caching_observed: true } })
 })
 
 test('does not re-read a cold cache', async ($, on) => {
   const ran = await statusReads($, on, 'cache cold')
 
-  expect(ran.some(cmd => cmd.includes('"prompt_cache"'))).toBe(false)
+  expect(overrides(ran)).toEqual([{}])
 })
 
 test('does not re-read when no request has been sent', async ($, on) => {
   const ran = await statusReads($, on, 'cache warm 4m (5m ttl)', false)
 
-  expect(ran.some(cmd => cmd.includes('"prompt_cache"'))).toBe(false)
+  expect(overrides(ran)).toEqual([{}])
 })
 
 test('keeps the verdict when the status read fails', async ($, on) => {
