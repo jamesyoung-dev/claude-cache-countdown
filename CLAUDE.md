@@ -12,7 +12,7 @@ Run from the repo root.
 
 - Test: `claude plugin test ./cache-countdown`. Runs every `*.test.ts` under the folder, each file in a child process, and exits 1 on failure. The CLI has no option to pick a single file or test.
 - Validate: `claude plugin validate .` checks the marketplace. `claude plugin validate cache-countdown` checks the manifest and the hooks module against the installed engine. CI runs both.
-- Type-check: `tsc -p cache-countdown`, with TypeScript 5.4 or newer. CI pins 5.9.3. There is no package.json, so the version lives only in `.github/workflows/test.yml`.
+- Type-check: copy the committed declarations into the plugin folder, then run `tsc`: `cp -R typecheck/types cache-countdown/.claude-plugin/ && cp typecheck/tsconfig.json cache-countdown/ && tsc -p cache-countdown`. Needs TypeScript 5.4 or newer. CI runs the same steps and pins 5.9.3 in `.github/workflows/test.yml`, since there is no package.json.
 - Live development: `claude --plugin-dir cache-countdown`. Edits reload as each turn ends.
 - The mod runs `statusline_plus.sh` and prints nothing without it. Install claude_statusline_plus to `~/.claude` (or `$CLAUDE_CONFIG_DIR`), or to `<project>/.claude`, before testing the live behavior.
 
@@ -23,7 +23,8 @@ Run from the repo root.
 - `cache-countdown/hooks/hooks.json`: names `register.tsx` as the hooks module.
 - `cache-countdown/tests/countdown.test.ts`: the only test file.
 - `.github/workflows/test.yml`: CI.
-- `cache-countdown/.claude-plugin/types/` holds the engine's TypeScript declarations for the hook API. Claude Code writes them when it loads the mod from a folder, and the first line of `index.d.ts` names the version that wrote them. The folder is committed as a snapshot for `tsc`, so don't hand-edit it. `cache-countdown/tsconfig.json` extends it.
+- `typecheck/`: the committed snapshot of the engine's TypeScript declarations for the hook API (`typecheck/types/`), and the tsconfig that extends it. It sits outside the plugin folder so installs don't ship it. The first line of `typecheck/types/claude-code/index.d.ts` names the Claude Code version that wrote it. Don't hand-edit it.
+- `cache-countdown/.claude-plugin/types/` and `cache-countdown/tsconfig.json`: local copies, git-ignored. Claude Code writes the first when it loads the mod from a folder, and the type-check step copies both in from `typecheck/`.
 
 ## Architecture
 
@@ -40,7 +41,7 @@ Every hook ends in `.catch(... next(e))`. The mod is a display aid, so a failure
 ## Conventions
 
 - **Supported Claude Code versions** are 2.1.286 and 2.1.305. Change them together in three places: the `claude-code` matrix in `.github/workflows/test.yml` (and its comment), and the Requirements list in README.md. The README's "Problem" section names 2.1.296 as a dated observation, not a support statement. Leave it alone when the supported versions change.
-- **Early-access API.** `.claude-plugin/types/claude-code/index.d.ts` is the hook API's declaration, marked as changeable without notice. Don't hand-edit it. Reload the mod to regenerate it, and check against the engine with `claude plugin validate cache-countdown`. If the engine skips the hooks, approvals still work and the line is simply absent.
+- **Early-access API.** `typecheck/types/claude-code/index.d.ts` is the hook API's declaration, marked as changeable without notice. Don't hand-edit it. To update it, load the mod in Claude Code (which rewrites `cache-countdown/.claude-plugin/types/`), copy that folder over `typecheck/types/`, and commit. Check against the engine with `claude plugin validate cache-countdown`. If the engine skips the hooks, approvals still work and the line is simply absent.
 - **Tests are black-box.** Assert on what a hook returns or draws: the verdict, the process argv, or the rendered `ToolUse`, `ToolGroup` and `ToolProgress` output. Don't assert on module internals such as the `pending` Map or its timers. The three `ui.render` tests in `countdown.test.ts` show the pattern.
 - **Test kit details.** Register handlers with `on(...)` before the first `$` call in a test. Call `mock.clock(on, { now })` before any `$` use, and `clock.settle()` or `clock.advance()` to run timers. A `tool.call` handler must answer `{ result: ... }`, cast `as never`.
 
