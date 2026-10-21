@@ -30,3 +30,9 @@ jobs:
 
       - name: Run plugin tests
         run: claude plugin test ./cache-countdown
+
+      - name: Validate marketplace
+        run: claude plugin validate .
+
+      - name: Validate plugin
+        run: claude plugin validate cache-countdown
