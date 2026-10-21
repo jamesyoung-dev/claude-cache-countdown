@@ -23,7 +23,7 @@ Run from the repo root.
 - `cache-countdown/hooks/hooks.json`: names `register.tsx` as the hooks module.
 - `cache-countdown/tests/countdown.test.ts`: the only test file.
 - `.github/workflows/test.yml`: CI.
-- `typecheck/`: the committed snapshot of the engine's TypeScript declarations for the hook API (`typecheck/types/`), and the tsconfig that extends it. It sits outside the plugin folder so installs don't ship it. The first line of `typecheck/types/claude-code/index.d.ts` names the Claude Code version that wrote it. Don't hand-edit it.
+- `typecheck/`: the committed snapshot of the engine's TypeScript declarations for the hook API (`typecheck/types/`), and the tsconfig that extends it. It sits outside the plugin folder so installs don't ship it. The first line of `typecheck/types/claude-code/index.d.ts` names the Claude Code version that wrote it. Keep the snapshot on the ceiling of the CI matrix (currently 2.1.305), the newest version the code claims to support. Don't hand-edit it.
 - `cache-countdown/.claude-plugin/types/` and `cache-countdown/tsconfig.json`: local copies, git-ignored. Claude Code writes the first when it loads the mod from a folder, and the type-check step copies both in from `typecheck/`.
 
 ## Architecture
