@@ -1,4 +1,4 @@
-import { test, expect, mock } from 'claude-code/testing'
+import { test, expect, mock, type TestBody } from 'claude-code/testing'
 
 const RESULT = {
   turnId: 't1',
@@ -42,7 +42,7 @@ test('passes the response stream through unchanged', async ($, on) => {
 
 test('passes an ask verdict through unchanged', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
-  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('tool.check', () => ({ decision: 'ask', rule: 'Edit' }) as never)
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('session.root', () => ({ value: '/tmp/project' }) as never)
@@ -62,13 +62,13 @@ test('draws the status line text under a waiting call', async ($, on) => {
 // see whether the cache line is in it. `tool.call` is never resolved here: the
 // command is "still running" for the whole test, unless a test resolves it itself.
 async function waitingCall(
-  $: Parameters<Parameters<typeof test>[1]>[0],
-  on: Parameters<Parameters<typeof test>[1]>[1],
+  $: Parameters<TestBody>[0],
+  on: Parameters<TestBody>[1],
   verdict: object = { decision: 'ask', rule: 'Bash' },
   stdout = STATUS,
 ) {
   const clock = mock.clock(on, { now: 1_000_000 })
-  on('process.run', () => ({ value: { exitCode: 0, stdout, stderr: '' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('tool.check', () => verdict as never)
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('session.root', () => ({ value: '/tmp/project' }) as never)
@@ -146,8 +146,8 @@ test('draws the line under the last call of the response that asked', async ($, 
 // Runs one response (unless `responded` is false), then a tool check, and returns the argv of every status read.
 // `tierStdout` is what the transcript's TTL tier read prints ('300', '3600', or '' when it finds none).
 async function statusReads(
-  $: Parameters<Parameters<typeof test>[1]>[0],
-  on: Parameters<Parameters<typeof test>[1]>[1],
+  $: Parameters<TestBody>[0],
+  on: Parameters<TestBody>[1],
   stdout: string,
   responded = true,
   tierStdout = '',
@@ -155,9 +155,9 @@ async function statusReads(
   const clock = mock.clock(on, { now: 1_000_000 })
   const ran: string[][] = []
   on('process.run', (_$, e) => {
-    if (!e.argv[2]?.includes('statusline_plus')) return { value: { exitCode: 0, stdout: tierStdout, stderr: '' } }
+    if (!e.argv[2]?.includes('statusline_plus')) return { value: { exitCode: 0, stdout: tierStdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     ran.push([...e.argv])
-    return { value: { exitCode: 0, stdout, stderr: '' } }
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('turn.step', async function* () {
     return RESULT
@@ -221,9 +221,9 @@ test('does not re-read when the API reports no caching', async ($, on) => {
 test('draws a warm line when the transcript reads cold but a request was just sent', async ($, on) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   on('process.run', (_$, e) => {
-    if (!e.argv[2]?.includes('statusline_plus')) return { value: { exitCode: 0, stdout: '3600', stderr: '' } }
+    if (!e.argv[2]?.includes('statusline_plus')) return { value: { exitCode: 0, stdout: '3600', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const stdout = JSON.parse(e.argv.at(-1) ?? '{}').prompt_cache ? 'cache warm 59m' : 'cache cold · 140k'
-    return { value: { exitCode: 0, stdout, stderr: '' } }
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('turn.step', async function* () {
     return RESULT
@@ -285,13 +285,13 @@ test('draws the status line in the colors it prints', async ($, on) => {
 // Asks for approval for each call in order, with a status read the test can change. Returns the clock,
 // and a way to draw a call's row.
 async function askingCalls(
-  $: Parameters<Parameters<typeof test>[1]>[0],
-  on: Parameters<Parameters<typeof test>[1]>[1],
+  $: Parameters<TestBody>[0],
+  on: Parameters<TestBody>[1],
   status: () => string,
   calls: { tool_use_id: string; agentId?: string }[],
 ) {
   const clock = mock.clock(on, { now: 1_000_000 })
-  on('process.run', () => ({ value: { exitCode: 0, stdout: status(), stderr: '' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: status(), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('tool.check', () => ({ decision: 'ask', rule: 'Bash' }) as never)
   on('session.id', () => ({ value: 'session-1' }) as never)
   on('session.root', () => ({ value: '/tmp/project' }) as never)
