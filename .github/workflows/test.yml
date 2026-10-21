@@ -13,6 +13,7 @@ jobs:
   test:
     name: Test (Claude Code ${{ matrix.claude-code }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
